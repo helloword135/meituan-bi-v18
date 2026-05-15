@@ -37,7 +37,7 @@ st.sidebar.header("授权验证")
 auth_code = st.sidebar.text_input(
     "请输入授权码",
     type="password",
-    placeholder="例如：YC-2026-001"
+    placeholder=""
 )
 
 project_code_input = st.sidebar.text_input(
