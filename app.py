@@ -43,7 +43,7 @@ auth_code = st.sidebar.text_input(
 project_code_input = st.sidebar.text_input(
     "项目/城市编码",
     value="",
-    placeholder="请输入城市编码",
+    placeholder="",
     help="城市编码必须和授权码绑定的编码一致。"
 )
 if st.sidebar.button("验证授权", type="primary"):
