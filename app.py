@@ -43,8 +43,8 @@ auth_code = st.sidebar.text_input(
 project_code_input = st.sidebar.text_input(
     "项目/城市编码",
     value="",
-    placeholder="请输入项目/城市编码，例如：yucheng",
-    help="项目/城市编码必须和授权码绑定的编码一致。"
+    placeholder="请输入城市编码",
+    help="城市编码必须和授权码绑定的编码一致。"
 )
 if st.sidebar.button("数据库连接测试"):
     try:
