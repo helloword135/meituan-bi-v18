@@ -1,0 +1,1 @@
+把微信收款码图片命名为 wechat_pay.png，放到这个 assets 文件夹。
