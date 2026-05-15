@@ -16,7 +16,7 @@ from business_dashboard_v18 import (
 # =========================
 # 商业展示配置：这里可自行修改
 # =========================
-ADMIN_WECHAT = "13523700750"
+ADMIN_WECHAT = "付费后联系"
 PRODUCT_NAME = "美团团购BI看板 V18.3 稳定正式版"
 PAY_IMAGE_PATH = "assets/wechat_pay.png"
 
