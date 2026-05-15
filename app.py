@@ -16,8 +16,8 @@ from business_dashboard_v18 import (
 # =========================
 # 商业展示配置：这里可自行修改
 # =========================
-ADMIN_WECHAT = "请修改为你的微信号"
-PRODUCT_NAME = "美团BI计算工具 V18.3 稳定正式版"
+ADMIN_WECHAT = "13523700750"
+PRODUCT_NAME = "美团团购BI看板 V18.3 稳定正式版"
 PAY_IMAGE_PATH = "assets/wechat_pay.png"
 
 PRICE_MONTH = "月卡：399元 / 城市"
