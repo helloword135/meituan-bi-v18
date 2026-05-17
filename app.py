@@ -46,6 +46,20 @@ project_code_input = st.sidebar.text_input(
     placeholder="",
     help="城市编码必须和授权码绑定的编码一致。"
 )
+if st.sidebar.button("数据库连接测试"):
+    try:
+        client = get_supabase_client()
+        resp = client.table("auth_codes").select("*").execute()
+        rows = resp.data or []
+        st.sidebar.success("数据库连接成功")
+        st.sidebar.json({
+            "SUPABASE_URL": st.secrets["SUPABASE_URL"],
+            "读取到的授权码数量": len(rows),
+            "auth_codes前20行": rows[:20],
+        })
+    except Exception as e:
+        st.sidebar.error("数据库连接失败")
+        st.sidebar.exception(e)
 if st.sidebar.button("验证授权", type="primary"):
     try:
         client = get_supabase_client()
