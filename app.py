@@ -12,12 +12,14 @@ from business_dashboard_v18 import (
     delete_project_data,
 )
 
+from shen_member_cloud import render_shen_member_cloud_monitor
+
 
 # =========================
 # 商业展示配置：这里可自行修改
 # =========================
 ADMIN_WECHAT = "付费后联系"
-PRODUCT_NAME = "美团团购BI看板 V18.3 稳定正式版"
+PRODUCT_NAME = "美团团购BI看板 V18.8 神会员监控版"
 PAY_IMAGE_PATH = "assets/wechat_pay.png"
 
 PRICE_MONTH = "月卡：99元 / 城市"
@@ -30,7 +32,7 @@ PRICE_NOTICE = "付款后请备注城市/项目名称，并联系管理员获取
 st.set_page_config(page_title=PRODUCT_NAME, layout="wide")
 
 st.title(PRODUCT_NAME)
-st.caption("授权码收费版｜云历史库｜每日数据自动累计｜授权到期后自动无法使用")
+st.caption("授权码收费版｜云历史库｜每日数据自动累计｜神会员监控｜授权到期后自动无法使用")
 
 st.sidebar.header("授权验证")
 
@@ -46,6 +48,7 @@ project_code_input = st.sidebar.text_input(
     placeholder="",
     help="城市编码必须和授权码绑定的编码一致。"
 )
+
 if st.sidebar.button("验证授权", type="primary"):
     try:
         client = get_supabase_client()
@@ -126,96 +129,108 @@ with st.sidebar:
                 st.exception(e)
 
 
-st.subheader("第一步：上传当天导出文件")
-daily_file = st.file_uploader("上传当天导出Excel文件", type=["xlsx", "xls"], key="daily_file")
-
-st.subheader("第二步：上传BD门店明细")
-bd_file = st.file_uploader("上传BD门店明细.xlsx", type=["xlsx", "xls"], key="bd_file")
-
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    save_to_cloud = st.button("保存当天数据到云历史库", type="primary")
-
-with col2:
-    generate_dashboard = st.button("生成经营看板")
-
-with col3:
-    download_history = st.button("下载当前云历史库")
+tab_main, tab_shen = st.tabs([
+    "经营看板",
+    "神会员监控"
+])
 
 
-if save_to_cloud:
-    if daily_file is None:
-        st.error("请先上传当天导出文件。")
-    else:
-        try:
-            client = get_supabase_client()
-            inserted_count = upsert_daily_to_cloud(client, project_code, daily_file)
-            st.success(f"当天数据已保存/覆盖到云历史库，共处理 {inserted_count} 行。")
-            status = get_history_status(client, project_code)
-            st.write("当前云历史库状态：")
-            st.write(status)
-        except Exception as e:
-            st.error("保存失败，请检查文件字段或 Supabase 配置。")
-            st.exception(e)
+with tab_main:
+    st.subheader("第一步：上传当天导出文件")
+    daily_file = st.file_uploader("上传当天导出Excel文件", type=["xlsx", "xls"], key="daily_file")
+
+    st.subheader("第二步：上传BD门店明细")
+    bd_file = st.file_uploader("上传BD门店明细.xlsx", type=["xlsx", "xls"], key="bd_file")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        save_to_cloud = st.button("保存当天数据到云历史库", type="primary")
+
+    with col2:
+        generate_dashboard = st.button("生成经营看板")
+
+    with col3:
+        download_history = st.button("下载当前云历史库")
 
 
-if generate_dashboard:
-    if bd_file is None:
-        st.error("请先上传BD门店明细.xlsx。")
-    else:
+    if save_to_cloud:
+        if daily_file is None:
+            st.error("请先上传当天导出文件。")
+        else:
+            try:
+                client = get_supabase_client()
+                inserted_count = upsert_daily_to_cloud(client, project_code, daily_file)
+                st.success(f"当天数据已保存/覆盖到云历史库，共处理 {inserted_count} 行。")
+                status = get_history_status(client, project_code)
+                st.write("当前云历史库状态：")
+                st.write(status)
+            except Exception as e:
+                st.error("保存失败，请检查文件字段或 Supabase 配置。")
+                st.exception(e)
+
+
+    if generate_dashboard:
+        if bd_file is None:
+            st.error("请先上传BD门店明细.xlsx。")
+        else:
+            try:
+                client = get_supabase_client()
+                history_df = load_history_from_cloud(client, project_code)
+
+                if history_df.empty:
+                    st.error("当前项目云历史库为空，请先上传当天导出文件并保存。")
+                else:
+                    bd_df = pd.read_excel(bd_file)
+                    result = calculate_dashboard(history_df, bd_df)
+
+                    st.success("经营看板生成完成。")
+                    st.subheader("经营看板预览")
+                    st.dataframe(result, use_container_width=True)
+
+                    output = BytesIO()
+                    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                        result.to_excel(writer, index=False, sheet_name="经营看板")
+                    output.seek(0)
+
+                    st.download_button(
+                        label="下载 business_dashboard.xlsx",
+                        data=output.getvalue(),
+                        file_name="business_dashboard.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+            except Exception as e:
+                st.error("生成失败，请检查BD门店明细或历史库字段。")
+                st.exception(e)
+
+
+    if download_history:
         try:
             client = get_supabase_client()
             history_df = load_history_from_cloud(client, project_code)
 
             if history_df.empty:
-                st.error("当前项目云历史库为空，请先上传当天导出文件并保存。")
+                st.warning("当前项目云历史库为空。")
             else:
-                bd_df = pd.read_excel(bd_file)
-                result = calculate_dashboard(history_df, bd_df)
-
-                st.success("经营看板生成完成。")
-                st.subheader("经营看板预览")
-                st.dataframe(result, use_container_width=True)
+                st.subheader("当前云历史库预览")
+                st.dataframe(history_df, use_container_width=True)
 
                 output = BytesIO()
                 with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                    result.to_excel(writer, index=False, sheet_name="经营看板")
+                    history_df.to_excel(writer, index=False, sheet_name="history")
                 output.seek(0)
 
                 st.download_button(
-                    label="下载 business_dashboard.xlsx",
+                    label="下载 history.xlsx",
                     data=output.getvalue(),
-                    file_name="business_dashboard.xlsx",
+                    file_name="history.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
         except Exception as e:
-            st.error("生成失败，请检查BD门店明细或历史库字段。")
+            st.error("下载历史库失败。")
             st.exception(e)
 
 
-if download_history:
-    try:
-        client = get_supabase_client()
-        history_df = load_history_from_cloud(client, project_code)
-
-        if history_df.empty:
-            st.warning("当前项目云历史库为空。")
-        else:
-            st.subheader("当前云历史库预览")
-            st.dataframe(history_df, use_container_width=True)
-
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                history_df.to_excel(writer, index=False, sheet_name="history")
-            output.seek(0)
-
-            st.download_button(
-                label="下载 history.xlsx",
-                data=output.getvalue(),
-                file_name="history.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-    except Exception as e:
-        st.error("下载历史库失败。")
-        st.exception(e)
+with tab_shen:
+    client = get_supabase_client()
+    render_shen_member_cloud_monitor(client, project_code)
