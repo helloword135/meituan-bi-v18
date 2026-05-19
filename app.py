@@ -26,9 +26,9 @@ ADMIN_WECHAT = "付费后联系"
 PRODUCT_NAME = "美团团购BI看板 V19.3 极速版"
 PAY_IMAGE_PATH = "assets/wechat_pay.png"
 
-PRICE_MONTH = "月卡：99元 / 城市"
-PRICE_QUARTER = "季卡：199元 / 城市"
-PRICE_YEAR = "年卡：399元 / 城市"
+PRICE_MONTH = "月卡：399元 / 城市"
+PRICE_QUARTER = "季卡：699元 / 城市"
+PRICE_YEAR = "年卡：1999元 / 城市"
 PRICE_CUSTOM = "多城市 / 定制版：单独报价"
 PRICE_NOTICE = "付款后请备注城市/项目名称，并联系管理员获取授权码。授权码到期后自动失效，续费后可延长有效期。"
 
