@@ -17,7 +17,7 @@ from shen_member_cloud import render_shen_member_cloud_monitor
 
 
 ADMIN_WECHAT = "付费后联系"
-PRODUCT_NAME = "美团团购BI看板 V20 极速正式版"
+PRODUCT_NAME = "美团团购BI看板 V20.2 每日数据批量上传版"
 PAY_IMAGE_PATH = "assets/wechat_pay.png"
 
 PRICE_MONTH = "月卡：99元 / 城市"
@@ -303,7 +303,7 @@ def render_kpi_monitor(client, project_code):
 
 st.set_page_config(page_title=PRODUCT_NAME, layout="wide")
 st.title(PRODUCT_NAME)
-st.caption("授权码收费版｜云历史库｜上传时预计算｜极速读取汇总表｜授权到期后自动无法使用")
+st.caption("授权码收费版｜云历史库｜每日数据批量上传｜上传时预计算｜极速读取汇总表｜授权到期后自动无法使用")
 
 st.sidebar.header("授权验证")
 
@@ -386,7 +386,12 @@ tab_main, tab_shen = st.tabs(["经营看板", "神会员监控"])
 
 with tab_main:
     st.subheader("第一步：上传当天导出文件")
-    daily_file = st.file_uploader("上传当天导出Excel文件", type=["xlsx", "xls"], key="daily_file")
+    daily_files = st.file_uploader(
+        "上传当天导出Excel文件（支持多文件批量上传）",
+        type=["xlsx", "xls"],
+        key="daily_files",
+        accept_multiple_files=True
+    )
 
     st.subheader("第二步：上传BD门店明细")
     st.info("BD门店明细不是必传。不上传时，系统会生成无BD版经营看板；上传后，会生成带BD维度的经营看板。")
@@ -401,18 +406,55 @@ with tab_main:
         download_history = st.button("下载当前云历史库")
 
     if save_to_cloud:
-        if daily_file is None:
-            st.error("请先上传当天导出文件。")
+        if not daily_files:
+            st.error("请先上传一个或多个当天导出文件。")
         else:
+            success_rows = []
+            fail_rows = []
+            total_count = 0
+
+            progress = st.progress(0)
+            status_text = st.empty()
+
+            client = get_supabase_client()
+
+            for idx, file in enumerate(daily_files, start=1):
+                try:
+                    status_text.write(f"正在处理：{file.name}（{idx}/{len(daily_files)}）")
+                    inserted_count = upsert_daily_to_cloud(client, project_code, file)
+
+                    total_count += inserted_count
+                    success_rows.append({
+                        "文件名": file.name,
+                        "处理行数": inserted_count,
+                        "状态": "成功"
+                    })
+
+                except Exception as e:
+                    fail_rows.append({
+                        "文件名": file.name,
+                        "错误原因": str(e),
+                        "状态": "失败"
+                    })
+
+                progress.progress(idx / len(daily_files))
+
+            status_text.write("批量处理完成。")
+
+            if success_rows:
+                st.success(f"成功处理 {len(success_rows)} 个文件，共 {total_count} 行。")
+                st.dataframe(pd.DataFrame(success_rows), use_container_width=True)
+
+            if fail_rows:
+                st.error(f"失败 {len(fail_rows)} 个文件。")
+                st.dataframe(pd.DataFrame(fail_rows), use_container_width=True)
+
             try:
-                client = get_supabase_client()
-                inserted_count = upsert_daily_to_cloud(client, project_code, daily_file)
-                st.success(f"当天数据已保存/覆盖到云历史库，共处理 {inserted_count} 行。")
                 status = get_history_status(client, project_code)
                 st.write("当前云历史库状态：")
                 st.write(status)
             except Exception as e:
-                st.error("保存失败，请检查文件字段或 Supabase 配置。")
+                st.warning("数据已处理，但读取云历史库状态失败。")
                 st.exception(e)
 
     if generate_dashboard:
