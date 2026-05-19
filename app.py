@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 from io import BytesIO
@@ -12,83 +13,18 @@ from business_dashboard_v18 import (
     delete_project_data,
 )
 
-from shen_member_cloud import (
-    render_shen_member_cloud_monitor,
-    load_shen_member_from_cloud,
-    calc_shen_city_report,
-)
+from shen_member_cloud import render_shen_member_cloud_monitor
 
 
-# =========================
-# 商业展示配置：这里可自行修改
-# =========================
 ADMIN_WECHAT = "付费后联系"
-PRODUCT_NAME = "美团团购BI看板 V19.3 极速版"
+PRODUCT_NAME = "美团团购BI看板 V20 极速正式版"
 PAY_IMAGE_PATH = "assets/wechat_pay.png"
 
-PRICE_MONTH = "月卡：399元 / 城市"
-PRICE_QUARTER = "季卡：699元 / 城市"
-PRICE_YEAR = "年卡：1999元 / 城市"
+PRICE_MONTH = "月卡：99元 / 城市"
+PRICE_QUARTER = "季卡：199元 / 城市"
+PRICE_YEAR = "年卡：399元 / 城市"
 PRICE_CUSTOM = "多城市 / 定制版：单独报价"
 PRICE_NOTICE = "付款后请备注城市/项目名称，并联系管理员获取授权码。授权码到期后自动失效，续费后可延长有效期。"
-
-
-# =========================
-# 无BD版经营看板
-# =========================
-
-def load_latest_history_from_cloud_fast(client, project_code):
-    """
-    极速读取主业务历史库：只取当前项目最新 snapshot_date 的数据。
-    用于KPI和汇总，避免每次全量读取全部历史库。
-    """
-    latest_resp = (
-        client.table("meituan_history")
-        .select("snapshot_date")
-        .eq("project_code", project_code)
-        .order("snapshot_date", desc=True)
-        .limit(1)
-        .execute()
-    )
-
-    latest_rows = latest_resp.data or []
-    if not latest_rows:
-        return pd.DataFrame()
-
-    latest_date = latest_rows[0]["snapshot_date"]
-
-    all_rows = []
-    start = 0
-    page_size = 1000
-
-    while True:
-        resp = (
-            client.table("meituan_history")
-            .select("data")
-            .eq("project_code", project_code)
-            .eq("snapshot_date", latest_date)
-            .range(start, start + page_size - 1)
-            .execute()
-        )
-
-        rows = resp.data or []
-        if not rows:
-            break
-
-        all_rows.extend(rows)
-
-        if len(rows) < page_size:
-            break
-
-        start += page_size
-
-    if not all_rows:
-        return pd.DataFrame()
-
-    df = pd.DataFrame([r["data"] for r in all_rows])
-    if "快照日期" in df.columns:
-        df["快照日期"] = pd.to_datetime(df["快照日期"], errors="coerce")
-    return df
 
 
 def calculate_dashboard_no_bd(df):
@@ -103,16 +39,8 @@ def calculate_dashboard_no_bd(df):
     decorate_col = "是否装修头图达标"
 
     need_cols = [
-        shop_col,
-        level_col,
-        gtv_col,
-        smart_col,
-        new_flag_col,
-        new_gtv_col,
-        active_col,
-        shelf_col,
-        decorate_col,
-        "快照日期",
+        shop_col, level_col, gtv_col, smart_col, new_flag_col, new_gtv_col,
+        active_col, shelf_col, decorate_col, "快照日期"
     ]
 
     missing = [c for c in need_cols if c not in df.columns]
@@ -134,8 +62,6 @@ def calculate_dashboard_no_bd(df):
     }
 
     df = df.groupby(["快照日期", shop_col], as_index=False).agg(agg_dict)
-    df = df.sort_values(by=[shop_col, "快照日期"])
-
     latest_date = df["快照日期"].max()
     latest_df = df[df["快照日期"] == latest_date].copy()
 
@@ -160,7 +86,7 @@ def calculate_dashboard_no_bd(df):
 
 
 def build_dashboard_summary(result):
-    summary_cols = [
+    cols = [
         "月度累计GTV",
         "月度累计智能点餐",
         "新签门店实付验证GTV",
@@ -171,108 +97,52 @@ def build_dashboard_summary(result):
     ]
 
     df = result.copy()
-
-    for col in summary_cols:
+    for col in cols:
         if col not in df.columns:
             df[col] = 0
-
-    for col in [
-        "月度累计GTV",
-        "月度累计智能点餐",
-        "新签门店实付验证GTV",
-        "月度累计新签",
-        "是否本月新签门店动销达标",
-        "是否货架达标",
-        "是否装修头图达标",
-    ]:
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
-    total_shop_count = len(df)
-    gtv_positive_count = int((df["月度累计GTV"] > 0).sum())
-    smart_positive_count = int((df["月度累计智能点餐"] > 0).sum())
-    new_shop_count = int(df["月度累计新签"].sum())
-    active_count = int(df["是否本月新签门店动销达标"].sum())
-    shelf_count = int(df["是否货架达标"].sum())
-    decorate_count = int(df["是否装修头图达标"].sum())
-
-    summary = pd.DataFrame([
-        {
-            "汇总口径": "合计",
-            "门店总数": total_shop_count,
-            "有GTV门店数": gtv_positive_count,
-            "有智能点餐门店数": smart_positive_count,
-            "月度累计GTV": round(df["月度累计GTV"].sum(), 2),
-            "月度累计智能点餐": round(df["月度累计智能点餐"].sum(), 2),
-            "新签门店实付验证GTV": round(df["新签门店实付验证GTV"].sum(), 2),
-            "月度累计新签": new_shop_count,
-            "新签门店动销达标数": active_count,
-            "货架达标数": shelf_count,
-            "装修头图达标数": decorate_count,
-        }
-    ])
+    summary = pd.DataFrame([{
+        "汇总口径": "合计",
+        "门店总数": len(df),
+        "有GTV门店数": int((df["月度累计GTV"] > 0).sum()),
+        "有智能点餐门店数": int((df["月度累计智能点餐"] > 0).sum()),
+        "月度累计GTV": round(df["月度累计GTV"].sum(), 2),
+        "月度累计智能点餐": round(df["月度累计智能点餐"].sum(), 2),
+        "新签门店实付验证GTV": round(df["新签门店实付验证GTV"].sum(), 2),
+        "月度累计新签": int(df["月度累计新签"].sum()),
+        "新签门店动销达标数": int(df["是否本月新签门店动销达标"].sum()),
+        "货架达标数": int(df["是否货架达标"].sum()),
+        "装修头图达标数": int(df["是否装修头图达标"].sum()),
+    }])
 
     return summary
 
 
-
-def get_latest_dashboard_summary(client, project_code):
-    history_df = load_history_from_cloud(client, project_code)
-    if history_df.empty:
-        return None
-
-    result = calculate_dashboard_no_bd(history_df)
-    summary_df = build_dashboard_summary(result)
-    return summary_df.iloc[0].to_dict()
-
-
-def get_latest_shen_rate(client, project_code):
-    try:
-        shen_df = load_shen_member_from_cloud(client, project_code)
-        if shen_df.empty:
-            return 0.0
-
-        city_report = calc_shen_city_report(shen_df)
-        if city_report.empty:
-            return 0.0
-
-        latest_date = city_report["日期"].max()
-        latest = city_report[city_report["日期"] == latest_date].iloc[-1]
-        return float(latest["deal覆盖率"])
-    except Exception:
-        return 0.0
+def upsert_kpi_daily_summary(client, project_code, summary):
+    record = {
+        "project_code": project_code,
+        "summary_date": pd.Timestamp.today().strftime("%Y-%m-%d"),
+        "gtv": float(summary.get("月度累计GTV", 0)),
+        "smart_gtv": float(summary.get("月度累计智能点餐", 0)),
+        "new_shop_gtv": float(summary.get("新签门店实付验证GTV", 0)),
+        "new_shop_count": int(summary.get("月度累计新签", 0)),
+        "shop_count": int(summary.get("门店总数", 0)),
+        "data": dict(summary),
+    }
+    client.table("kpi_daily_summary").upsert(record, on_conflict="project_code").execute()
 
 
-def _score_by_cap(rate, weight, cap=1.5):
-    return round(min(rate, cap) * weight, 2)
-
-
-@st.cache_data(ttl=300, show_spinner=False)
-def get_cached_main_history_summary(project_code):
-    client = get_supabase_client()
-    history_df = load_latest_history_from_cloud_fast(client, project_code)
-    if history_df.empty:
-        return None
-    result = calculate_dashboard_no_bd(history_df)
-    summary_df = build_dashboard_summary(result)
-    return summary_df.iloc[0].to_dict()
-
-
-@st.cache_data(ttl=300, show_spinner=False)
-def get_cached_shen_latest_rate(project_code):
-    client = get_supabase_client()
-    try:
-        shen_df = load_shen_member_from_cloud(client, project_code)
-        if shen_df.empty:
-            return 0.0
-        city_report = calc_shen_city_report(shen_df)
-        if city_report.empty:
-            return 0.0
-        latest_date = city_report["日期"].max()
-        latest = city_report[city_report["日期"] == latest_date].iloc[-1]
-        return float(latest["deal覆盖率"])
-    except Exception:
-        return 0.0
-
+def load_kpi_daily_summary(client, project_code):
+    resp = (
+        client.table("kpi_daily_summary")
+        .select("*")
+        .eq("project_code", project_code)
+        .limit(1)
+        .execute()
+    )
+    rows = resp.data or []
+    return rows[0] if rows else None
 
 
 def load_kpi_targets(client, project_code):
@@ -282,7 +152,6 @@ def load_kpi_targets(client, project_code):
         "target_new_gtv": 136477.0,
         "target_shen_rate": 85.0,
     }
-
     try:
         resp = (
             client.table("kpi_targets")
@@ -291,21 +160,16 @@ def load_kpi_targets(client, project_code):
             .limit(1)
             .execute()
         )
-
         rows = resp.data or []
-
         if not rows:
             return default_targets
-
         row = rows[0]
-
         return {
             "target_gtv": float(row.get("target_gtv") or default_targets["target_gtv"]),
             "target_smart": float(row.get("target_smart") or default_targets["target_smart"]),
             "target_new_gtv": float(row.get("target_new_gtv") or default_targets["target_new_gtv"]),
             "target_shen_rate": float(row.get("target_shen_rate") or default_targets["target_shen_rate"]),
         }
-
     except Exception:
         return default_targets
 
@@ -318,73 +182,56 @@ def save_kpi_targets(client, project_code, target_gtv, target_smart, target_new_
         "target_new_gtv": float(target_new_gtv),
         "target_shen_rate": float(target_shen_rate),
     }
-
     client.table("kpi_targets").upsert(record, on_conflict="project_code").execute()
+
+
+def load_latest_shen_rate_summary(client, project_code):
+    resp = (
+        client.table("shen_daily_summary")
+        .select("*")
+        .eq("project_code", project_code)
+        .order("summary_date", desc=True)
+        .limit(1)
+        .execute()
+    )
+    rows = resp.data or []
+    if not rows:
+        return 0.0
+    return float(rows[0].get("deal_rate") or 0)
+
+
+def _score_by_cap(rate, weight, cap=1.5):
+    return round(min(rate, cap) * weight, 2)
 
 
 def render_kpi_monitor(client, project_code):
     st.subheader("KPI监控")
-    st.info("目标值由城市自行输入；完成值自动从云历史库月累计数据带出。")
+    st.info("V20极速版：完成值优先读取预计算汇总表，不再每次全量计算历史明细。")
 
-    summary = get_cached_main_history_summary(project_code)
-
+    summary = load_kpi_daily_summary(client, project_code)
     if summary is None:
-        st.warning("当前项目主业务云历史库为空，暂无法自动带出KPI完成值。")
+        st.warning("暂无KPI汇总数据。请先到【经营看板】生成一次经营看板，系统会自动保存汇总。")
         return
 
-    completed_gtv = float(summary.get("月度累计GTV", 0) or 0)
-    completed_smart = float(summary.get("月度累计智能点餐", 0) or 0)
-    completed_new_gtv = float(summary.get("新签门店实付验证GTV", 0) or 0)
-    completed_shen_rate = float(get_cached_shen_latest_rate(project_code) or 0)
+    completed_gtv = float(summary.get("gtv") or 0)
+    completed_smart = float(summary.get("smart_gtv") or 0)
+    completed_new_gtv = float(summary.get("new_shop_gtv") or 0)
+    completed_shen_rate = float(load_latest_shen_rate_summary(client, project_code) or 0)
+
+    st.caption(f"KPI汇总更新时间：{summary.get('summary_date', '-')}")
 
     st.markdown("### 目标配置")
-
     kpi_targets = load_kpi_targets(client, project_code)
 
-    target_gtv = st.number_input(
-        "实付验证GTV目标",
-        min_value=0.0,
-        value=float(kpi_targets["target_gtv"]),
-        step=1000.0,
-        key=f"target_gtv_{project_code}"
-    )
-
-    target_smart = st.number_input(
-        "智能点餐GTV目标",
-        min_value=0.0,
-        value=float(kpi_targets["target_smart"]),
-        step=1000.0,
-        key=f"target_smart_{project_code}"
-    )
-
-    target_new_gtv = st.number_input(
-        "新签门店GTV目标",
-        min_value=0.0,
-        value=float(kpi_targets["target_new_gtv"]),
-        step=1000.0,
-        key=f"target_new_gtv_{project_code}"
-    )
-
-    target_shen_rate = st.number_input(
-        "神券报名率目标（%）",
-        min_value=0.0,
-        max_value=100.0,
-        value=float(kpi_targets["target_shen_rate"]),
-        step=1.0,
-        key=f"target_shen_rate_{project_code}"
-    )
+    target_gtv = st.number_input("实付验证GTV目标", min_value=0.0, value=float(kpi_targets["target_gtv"]), step=1000.0, key=f"target_gtv_{project_code}")
+    target_smart = st.number_input("智能点餐GTV目标", min_value=0.0, value=float(kpi_targets["target_smart"]), step=1000.0, key=f"target_smart_{project_code}")
+    target_new_gtv = st.number_input("新签门店GTV目标", min_value=0.0, value=float(kpi_targets["target_new_gtv"]), step=1000.0, key=f"target_new_gtv_{project_code}")
+    target_shen_rate = st.number_input("神券报名率目标（%）", min_value=0.0, max_value=100.0, value=float(kpi_targets["target_shen_rate"]), step=1.0, key=f"target_shen_rate_{project_code}")
 
     if st.button("保存当前城市KPI目标", type="primary", key=f"save_kpi_targets_{project_code}"):
         try:
-            save_kpi_targets(
-                client,
-                project_code,
-                target_gtv,
-                target_smart,
-                target_new_gtv,
-                target_shen_rate
-            )
-            st.success(f"项目 {project_code} 的KPI目标已保存。下次登录会自动带出。")
+            save_kpi_targets(client, project_code, target_gtv, target_smart, target_new_gtv, target_shen_rate)
+            st.success(f"项目 {project_code} 的KPI目标已保存。")
         except Exception as e:
             st.error("KPI目标保存失败，请确认 Supabase 已执行 kpi_targets 建表SQL。")
             st.exception(e)
@@ -451,42 +298,25 @@ def render_kpi_monitor(client, project_code):
         kpi_df.to_excel(writer, index=False, sheet_name="KPI监控")
     output.seek(0)
 
-    st.download_button(
-        label="下载KPI监控.xlsx",
-        data=output.getvalue(),
-        file_name="KPI监控.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    st.download_button("下载KPI监控.xlsx", output.getvalue(), "KPI监控.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
 
 st.set_page_config(page_title=PRODUCT_NAME, layout="wide")
-
 st.title(PRODUCT_NAME)
-st.caption("授权码收费版｜云历史库｜每日数据自动累计｜神会员监控｜KPI监控｜极速读取｜目标云保存｜授权到期后自动无法使用")
+st.caption("授权码收费版｜云历史库｜上传时预计算｜极速读取汇总表｜授权到期后自动无法使用")
 
 st.sidebar.header("授权验证")
 
-auth_code = st.sidebar.text_input(
-    "请输入授权码",
-    type="password",
-    placeholder=""
-)
-
-project_code_input = st.sidebar.text_input(
-    "项目/城市编码",
-    value="",
-    placeholder="",
-    help="城市编码必须和授权码绑定的编码一致。"
-)
+auth_code = st.sidebar.text_input("请输入授权码", type="password", placeholder="")
+project_code_input = st.sidebar.text_input("项目/城市编码", value="", placeholder="", help="城市编码必须和授权码绑定的编码一致。")
 
 if st.sidebar.button("验证授权", type="primary"):
     try:
         client = get_supabase_client()
         auth_info = verify_auth_code(client, auth_code, project_code_input)
-
         st.session_state["auth_ok"] = True
         st.session_state["auth_info"] = auth_info
         st.session_state["project_code"] = auth_info["project_code"]
-
         st.sidebar.success(f"授权成功，到期时间：{auth_info['expire_date']}")
     except Exception as e:
         st.session_state["auth_ok"] = False
@@ -511,25 +341,20 @@ if not auth_ok:
 
     st.subheader("购买授权")
     col1, col2 = st.columns(2)
-
     with col1:
         st.markdown("### 微信收款码")
         try:
             st.image(PAY_IMAGE_PATH, width=320)
         except Exception:
             st.info("请把微信收款码图片命名为 wechat_pay.png，放到 assets 文件夹。")
-
     with col2:
         st.markdown("### 联系管理员")
         st.write("付款后请联系管理员获取授权码。")
         st.code(f"微信号：{ADMIN_WECHAT}", language="text")
-
         st.markdown("### 授权说明")
         st.write("授权码支持有效期控制，到期后系统会自动停止使用。")
         st.write("如需续费，请联系管理员延长授权有效期。")
-
     st.stop()
-
 
 st.success(f"授权已通过｜项目编码：{project_code}｜到期时间：{auth_info['expire_date']}")
 
@@ -554,15 +379,10 @@ with st.sidebar:
                 delete_project_data(client, project_code)
                 st.success(f"已清空项目 {project_code} 的历史数据。")
             except Exception as e:
-                st.error("清空失败。")
+                st.error("清空失败。数据量大时请去 Supabase SQL Editor 删除。")
                 st.exception(e)
 
-
-tab_main, tab_shen = st.tabs([
-    "经营看板",
-    "神会员监控"
-])
-
+tab_main, tab_shen = st.tabs(["经营看板", "神会员监控"])
 
 with tab_main:
     st.subheader("第一步：上传当天导出文件")
@@ -573,16 +393,12 @@ with tab_main:
     bd_file = st.file_uploader("上传BD门店明细.xlsx（可选）", type=["xlsx", "xls"], key="bd_file")
 
     col1, col2, col3 = st.columns(3)
-
     with col1:
         save_to_cloud = st.button("保存当天数据到云历史库", type="primary")
-
     with col2:
         generate_dashboard = st.button("生成经营看板")
-
     with col3:
         download_history = st.button("下载当前云历史库")
-
 
     if save_to_cloud:
         if daily_file is None:
@@ -598,7 +414,6 @@ with tab_main:
             except Exception as e:
                 st.error("保存失败，请检查文件字段或 Supabase 配置。")
                 st.exception(e)
-
 
     if generate_dashboard:
         try:
@@ -617,8 +432,9 @@ with tab_main:
                     dashboard_mode = "无BD版经营看板"
 
                 summary_df = build_dashboard_summary(result)
+                upsert_kpi_daily_summary(client, project_code, summary_df.iloc[0].to_dict())
 
-                st.success(f"{dashboard_mode}生成完成。")
+                st.success(f"{dashboard_mode}生成完成，并已保存KPI汇总表。")
 
                 st.subheader("看板数据汇总")
                 st.dataframe(summary_df, use_container_width=True)
@@ -639,16 +455,10 @@ with tab_main:
                     result.to_excel(writer, index=False, sheet_name="经营看板")
                 output.seek(0)
 
-                st.download_button(
-                    label="下载 business_dashboard.xlsx",
-                    data=output.getvalue(),
-                    file_name="business_dashboard.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                st.download_button("下载 business_dashboard.xlsx", output.getvalue(), "business_dashboard.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         except Exception as e:
             st.error("生成失败，请检查历史库字段或BD门店明细。")
             st.exception(e)
-
 
     if download_history:
         try:
@@ -659,29 +469,22 @@ with tab_main:
                 st.warning("当前项目云历史库为空。")
             else:
                 st.subheader("当前云历史库预览")
-                st.dataframe(history_df, use_container_width=True)
+                st.dataframe(history_df.head(500), use_container_width=True)
+                st.caption(f"当前仅预览前500行，共 {len(history_df)} 行；完整数据请下载Excel。")
 
                 output = BytesIO()
                 with pd.ExcelWriter(output, engine="openpyxl") as writer:
                     history_df.to_excel(writer, index=False, sheet_name="history")
                 output.seek(0)
 
-                st.download_button(
-                    label="下载 history.xlsx",
-                    data=output.getvalue(),
-                    file_name="history.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                st.download_button("下载 history.xlsx", output.getvalue(), "history.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         except Exception as e:
             st.error("下载历史库失败。")
             st.exception(e)
 
-
 with tab_shen:
     left_col, right_col = st.columns([2, 1])
-
     with left_col:
         render_shen_member_cloud_monitor(get_supabase_client(), project_code)
-
     with right_col:
         render_kpi_monitor(get_supabase_client(), project_code)
