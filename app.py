@@ -12,14 +12,18 @@ from business_dashboard_v18 import (
     delete_project_data,
 )
 
-from shen_member_cloud import render_shen_member_cloud_monitor
+from shen_member_cloud import (
+    render_shen_member_cloud_monitor,
+    load_shen_member_from_cloud,
+    calc_shen_city_report,
+)
 
 
 # =========================
 # 商业展示配置：这里可自行修改
 # =========================
 ADMIN_WECHAT = "付费后联系"
-PRODUCT_NAME = "美团团购BI看板 V18.9 汇总增强版"
+PRODUCT_NAME = "美团团购BI看板 V19 KPI监控增强版"
 PAY_IMAGE_PATH = "assets/wechat_pay.png"
 
 PRICE_MONTH = "月卡：99元 / 城市"
@@ -155,10 +159,133 @@ def build_dashboard_summary(result):
     return summary
 
 
+
+def get_latest_dashboard_summary(client, project_code):
+    history_df = load_history_from_cloud(client, project_code)
+    if history_df.empty:
+        return None
+
+    result = calculate_dashboard_no_bd(history_df)
+    summary_df = build_dashboard_summary(result)
+    return summary_df.iloc[0].to_dict()
+
+
+def get_latest_shen_rate(client, project_code):
+    try:
+        shen_df = load_shen_member_from_cloud(client, project_code)
+        if shen_df.empty:
+            return 0.0
+
+        city_report = calc_shen_city_report(shen_df)
+        if city_report.empty:
+            return 0.0
+
+        latest_date = city_report["日期"].max()
+        latest = city_report[city_report["日期"] == latest_date].iloc[-1]
+        return float(latest["deal覆盖率"])
+    except Exception:
+        return 0.0
+
+
+def _score_by_cap(rate, weight, cap=1.5):
+    return round(min(rate, cap) * weight, 2)
+
+
+def render_kpi_monitor(client, project_code):
+    st.subheader("KPI监控")
+    st.info("目标值由城市自行输入；完成值自动从云历史库月累计数据带出。")
+
+    summary = get_latest_dashboard_summary(client, project_code)
+
+    if summary is None:
+        st.warning("当前项目主业务云历史库为空，暂无法自动带出KPI完成值。")
+        return
+
+    completed_gtv = float(summary.get("月度累计GTV", 0) or 0)
+    completed_smart = float(summary.get("月度累计智能点餐", 0) or 0)
+    completed_new_gtv = float(summary.get("新签门店实付验证GTV", 0) or 0)
+    completed_shen_rate = float(get_latest_shen_rate(client, project_code) or 0)
+
+    st.markdown("### 目标配置")
+
+    target_gtv = st.number_input("实付验证GTV目标", min_value=0.0, value=3031488.0, step=1000.0, key="target_gtv")
+    target_smart = st.number_input("智能点餐GTV目标", min_value=0.0, value=181889.0, step=1000.0, key="target_smart")
+    target_new_gtv = st.number_input("新签门店GTV目标", min_value=0.0, value=136477.0, step=1000.0, key="target_new_gtv")
+    target_shen_rate = st.number_input("神券报名率目标（%）", min_value=0.0, max_value=100.0, value=85.0, step=1.0, key="target_shen_rate")
+
+    rows = []
+
+    rate_gtv = completed_gtv / target_gtv if target_gtv > 0 else 0
+    score_gtv = _score_by_cap(rate_gtv, 75, 1.5)
+    rows.append({
+        "考核指标名称": "实付验证GTV完成率（去刷退）",
+        "权重": "75%",
+        "目标": round(target_gtv, 2),
+        "完成": round(completed_gtv, 2),
+        "完成率": f"{rate_gtv * 100:.2f}%",
+        "得分": score_gtv,
+    })
+
+    rate_smart = completed_smart / target_smart if target_smart > 0 else 0
+    score_smart = _score_by_cap(rate_smart, 15, 1.5)
+    rows.append({
+        "考核指标名称": "线下推广-智能点餐GTV完成率",
+        "权重": "15%",
+        "目标": round(target_smart, 2),
+        "完成": round(completed_smart, 2),
+        "完成率": f"{rate_smart * 100:.2f}%",
+        "得分": score_smart,
+    })
+
+    rate_new_gtv = completed_new_gtv / target_new_gtv if target_new_gtv > 0 else 0
+    score_new_gtv = _score_by_cap(rate_new_gtv, 10, 1.2)
+    rows.append({
+        "考核指标名称": "招货系统-新签门店GTV完成率",
+        "权重": "10%",
+        "目标": round(target_new_gtv, 2),
+        "完成": round(completed_new_gtv, 2),
+        "完成率": f"{rate_new_gtv * 100:.2f}%",
+        "得分": score_new_gtv,
+    })
+
+    shen_rate = completed_shen_rate / target_shen_rate if target_shen_rate > 0 else 0
+    shen_deduct = 0 if completed_shen_rate >= target_shen_rate else -5
+    rows.append({
+        "考核指标名称": "神券报名率",
+        "权重": "扣分项",
+        "目标": f"{target_shen_rate:.2f}%",
+        "完成": f"{completed_shen_rate:.2f}%",
+        "完成率": f"{shen_rate * 100:.2f}%",
+        "得分": shen_deduct,
+    })
+
+    kpi_df = pd.DataFrame(rows)
+    total_score = round(score_gtv + score_smart + score_new_gtv + shen_deduct, 2)
+
+    st.markdown("### KPI得分")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("总得分", total_score)
+    c2.metric("GTV完成率", f"{rate_gtv * 100:.2f}%")
+    c3.metric("神券报名率", f"{completed_shen_rate:.2f}%")
+
+    st.dataframe(kpi_df, use_container_width=True)
+
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        kpi_df.to_excel(writer, index=False, sheet_name="KPI监控")
+    output.seek(0)
+
+    st.download_button(
+        label="下载KPI监控.xlsx",
+        data=output.getvalue(),
+        file_name="KPI监控.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
 st.set_page_config(page_title=PRODUCT_NAME, layout="wide")
 
 st.title(PRODUCT_NAME)
-st.caption("授权码收费版｜云历史库｜每日数据自动累计｜神会员监控｜授权到期后自动无法使用")
+st.caption("授权码收费版｜云历史库｜每日数据自动累计｜神会员监控｜KPI监控｜授权到期后自动无法使用")
 
 st.sidebar.header("授权验证")
 
@@ -374,5 +501,10 @@ with tab_main:
 
 
 with tab_shen:
-    client = get_supabase_client()
-    render_shen_member_cloud_monitor(client, project_code)
+    left_col, right_col = st.columns([2, 1])
+
+    with left_col:
+        render_shen_member_cloud_monitor(get_supabase_client(), project_code)
+
+    with right_col:
+        render_kpi_monitor(get_supabase_client(), project_code)
