@@ -1,5 +1,5 @@
 
-# V20 极速正式版：上传时预计算、页面读取汇总表
+# V20.1 神会员批量上传版：多文件上传、逐个预计算、页面读取汇总表
 import re
 from io import BytesIO
 import pandas as pd
@@ -447,22 +447,77 @@ def render_shen_member_cloud_monitor(client, project_code):
                 st.exception(e)
 
     st.divider()
-    st.markdown("### 三、上传神会员每日数据")
-    shen_file = st.file_uploader("上传神会员Excel", type=["xlsx", "xls"], key="shen_member_cloud_file")
+    st.markdown("### 三、批量上传神会员每日数据")
+    shen_files = st.file_uploader(
+        "上传神会员Excel（支持多文件批量上传）",
+        type=["xlsx", "xls"],
+        key="shen_member_cloud_files",
+        accept_multiple_files=True
+    )
 
-    if st.button("保存神会员数据到云历史库", type="primary"):
-        if shen_file is None:
-            st.error("请先上传神会员Excel。")
+    if st.button("批量保存神会员数据到云历史库", type="primary"):
+        if not shen_files:
+            st.error("请先上传一个或多个神会员Excel。")
         else:
+            success_rows = []
+            fail_rows = []
+            total_count = 0
+            total_unmatched = 0
+
+            progress = st.progress(0)
+            status_text = st.empty()
+
+            for idx, file in enumerate(shen_files, start=1):
+                try:
+                    status_text.write(f"正在处理：{file.name}（{idx}/{len(shen_files)}）")
+
+                    count, date_list, city_report, bd_report, unmatched_df = upsert_shen_member_to_cloud(
+                        client,
+                        project_code,
+                        file
+                    )
+
+                    unmatched_count = 0
+                    if unmatched_df is not None and not unmatched_df.empty:
+                        unmatched_count = len(unmatched_df)
+
+                    total_count += count
+                    total_unmatched += unmatched_count
+
+                    success_rows.append({
+                        "文件名": file.name,
+                        "处理行数": count,
+                        "识别日期": "、".join(date_list),
+                        "未匹配BD行数": unmatched_count,
+                        "状态": "成功"
+                    })
+
+                except Exception as e:
+                    fail_rows.append({
+                        "文件名": file.name,
+                        "错误原因": str(e),
+                        "状态": "失败"
+                    })
+
+                progress.progress(idx / len(shen_files))
+
+            status_text.write("批量处理完成。")
+
+            if success_rows:
+                st.success(f"成功处理 {len(success_rows)} 个文件，共 {total_count} 行。")
+                st.dataframe(pd.DataFrame(success_rows), use_container_width=True)
+
+            if fail_rows:
+                st.error(f"失败 {len(fail_rows)} 个文件。")
+                st.dataframe(pd.DataFrame(fail_rows), use_container_width=True)
+
+            if total_unmatched > 0:
+                st.warning(f"本次共有 {total_unmatched} 行神会员数据未匹配到BD。")
+
             try:
-                count, date_list, city_report, bd_report, unmatched_df = upsert_shen_member_to_cloud(client, project_code, shen_file)
-                st.success(f"神会员数据已保存/覆盖，并已完成汇总预计算。明细 {count} 行，日期：{', '.join(date_list)}")
                 st.write(get_shen_member_status(client, project_code))
-                if unmatched_df is not None and not unmatched_df.empty:
-                    st.warning(f"有 {len(unmatched_df)} 行神会员数据未匹配到BD。")
-            except Exception as e:
-                st.error("神会员数据保存失败。")
-                st.exception(e)
+            except Exception:
+                pass
 
     with st.expander("神会员数据删除"):
         st.info("建议按日期删除，避免全量删除超时。")
