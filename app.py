@@ -20,7 +20,7 @@ ADMIN_WECHAT = "付费后联系"
 PRODUCT_NAME = "美团团购BI看板 V19 增量计算正式版"
 PAY_IMAGE_PATH = "assets/wechat_pay.png"
 
-PRICE_MONTH = "月卡：99元 / 城市"
+PRICE_MONTH = "月卡：499元 / 城市"
 PRICE_QUARTER = "季卡：199元 / 城市"
 PRICE_YEAR = "年卡：399元 / 城市"
 PRICE_CUSTOM = "多城市 / 定制版：单独报价"
