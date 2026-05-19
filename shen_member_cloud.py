@@ -296,6 +296,56 @@ def get_shen_member_status(client, project_code):
     }
 
 
+
+def get_shen_uploaded_dates(client, project_code):
+    """
+    查询当前项目已上传的神会员日期清单：
+    日期、记录数、门店数。
+    """
+    all_rows = []
+    start = 0
+    page_size = 1000
+
+    while True:
+        resp = (
+            client.table(SHEN_TABLE)
+            .select("snapshot_date,shop_name")
+            .eq("project_code", project_code)
+            .range(start, start + page_size - 1)
+            .execute()
+        )
+
+        rows = resp.data or []
+        if not rows:
+            break
+
+        all_rows.extend(rows)
+
+        if len(rows) < page_size:
+            break
+
+        start += page_size
+
+    if not all_rows:
+        return pd.DataFrame(columns=["日期", "记录数", "门店数"])
+
+    df = pd.DataFrame(all_rows)
+    df["snapshot_date"] = pd.to_datetime(df["snapshot_date"], errors="coerce").dt.strftime("%Y-%m-%d")
+
+    result = (
+        df.groupby("snapshot_date")
+        .agg(
+            记录数=("shop_name", "count"),
+            门店数=("shop_name", "nunique")
+        )
+        .reset_index()
+        .rename(columns={"snapshot_date": "日期"})
+        .sort_values("日期")
+    )
+
+    return result
+
+
 def delete_shen_member_data(client, project_code):
     client.table(SHEN_TABLE).delete().eq("project_code", project_code).execute()
 
@@ -418,6 +468,14 @@ def render_shen_member_cloud_monitor(client, project_code):
         st.write("神会员云历史库")
         try:
             st.write(get_shen_member_status(client, project_code))
+
+            if st.button("查看已上传日期", key="show_shen_uploaded_dates"):
+                date_df = get_shen_uploaded_dates(client, project_code)
+                if date_df.empty:
+                    st.warning("当前项目暂无已上传日期。")
+                else:
+                    st.dataframe(date_df, use_container_width=True)
+
         except Exception as e:
             st.error("读取神会员历史库失败，请确认已执行建表SQL。")
             st.exception(e)
