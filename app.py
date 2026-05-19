@@ -23,12 +23,12 @@ from shen_member_cloud import (
 # 商业展示配置：这里可自行修改
 # =========================
 ADMIN_WECHAT = "付费后联系"
-PRODUCT_NAME = "美团团购BI看板 V19 KPI监控增强版"
+PRODUCT_NAME = "美团团购BI看板 V19.1 性能优化版"
 PAY_IMAGE_PATH = "assets/wechat_pay.png"
 
-PRICE_MONTH = "月卡：399元 / 城市"
-PRICE_QUARTER = "季卡：599元 / 城市"
-PRICE_YEAR = "年卡：1599元 / 城市"
+PRICE_MONTH = "月卡：99元 / 城市"
+PRICE_QUARTER = "季卡：199元 / 城市"
+PRICE_YEAR = "年卡：399元 / 城市"
 PRICE_CUSTOM = "多城市 / 定制版：单独报价"
 PRICE_NOTICE = "付款后请备注城市/项目名称，并联系管理员获取授权码。授权码到期后自动失效，续费后可延长有效期。"
 
@@ -191,11 +191,39 @@ def _score_by_cap(rate, weight, cap=1.5):
     return round(min(rate, cap) * weight, 2)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def get_cached_main_history_summary(project_code):
+    client = get_supabase_client()
+    history_df = load_history_from_cloud(client, project_code)
+    if history_df.empty:
+        return None
+    result = calculate_dashboard_no_bd(history_df)
+    summary_df = build_dashboard_summary(result)
+    return summary_df.iloc[0].to_dict()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_cached_shen_latest_rate(project_code):
+    client = get_supabase_client()
+    try:
+        shen_df = load_shen_member_from_cloud(client, project_code)
+        if shen_df.empty:
+            return 0.0
+        city_report = calc_shen_city_report(shen_df)
+        if city_report.empty:
+            return 0.0
+        latest_date = city_report["日期"].max()
+        latest = city_report[city_report["日期"] == latest_date].iloc[-1]
+        return float(latest["deal覆盖率"])
+    except Exception:
+        return 0.0
+
+
 def render_kpi_monitor(client, project_code):
     st.subheader("KPI监控")
     st.info("目标值由城市自行输入；完成值自动从云历史库月累计数据带出。")
 
-    summary = get_latest_dashboard_summary(client, project_code)
+    summary = get_cached_main_history_summary(project_code)
 
     if summary is None:
         st.warning("当前项目主业务云历史库为空，暂无法自动带出KPI完成值。")
@@ -204,7 +232,7 @@ def render_kpi_monitor(client, project_code):
     completed_gtv = float(summary.get("月度累计GTV", 0) or 0)
     completed_smart = float(summary.get("月度累计智能点餐", 0) or 0)
     completed_new_gtv = float(summary.get("新签门店实付验证GTV", 0) or 0)
-    completed_shen_rate = float(get_latest_shen_rate(client, project_code) or 0)
+    completed_shen_rate = float(get_cached_shen_latest_rate(project_code) or 0)
 
     st.markdown("### 目标配置")
 
@@ -285,7 +313,7 @@ def render_kpi_monitor(client, project_code):
 st.set_page_config(page_title=PRODUCT_NAME, layout="wide")
 
 st.title(PRODUCT_NAME)
-st.caption("授权码收费版｜云历史库｜每日数据自动累计｜神会员监控｜KPI监控｜授权到期后自动无法使用")
+st.caption("授权码收费版｜云历史库｜每日数据自动累计｜神会员监控｜KPI监控｜性能优化｜授权到期后自动无法使用")
 
 st.sidebar.header("授权验证")
 
@@ -454,7 +482,8 @@ with tab_main:
                 c4.metric("月度累计新签", f"{int(summary_df.loc[0, '月度累计新签'])}")
 
                 st.subheader("经营看板预览")
-                st.dataframe(result, use_container_width=True)
+                st.dataframe(result.head(500), use_container_width=True)
+                st.caption(f"当前仅预览前500行，共 {len(result)} 行；完整数据请下载Excel。")
 
                 output = BytesIO()
                 with pd.ExcelWriter(output, engine="openpyxl") as writer:

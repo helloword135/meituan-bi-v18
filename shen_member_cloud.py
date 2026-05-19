@@ -350,6 +350,11 @@ def delete_shen_member_data(client, project_code):
     client.table(SHEN_TABLE).delete().eq("project_code", project_code).execute()
 
 
+
+def delete_shen_member_by_date(client, project_code, snapshot_date):
+    client.table(SHEN_TABLE).delete().eq("project_code", project_code).eq("snapshot_date", str(snapshot_date)).execute()
+
+
 def calc_shen_city_report(shen_df):
     df = prepare_shen_df(shen_df)
     result_list = []
@@ -541,16 +546,46 @@ def render_shen_member_cloud_monitor(client, project_code):
                 st.error("神会员数据保存失败。")
                 st.exception(e)
 
-    with st.expander("危险操作：清空神会员云历史库"):
-        st.warning("只会清空当前项目编码下的神会员数据，不会删除BD档案库。")
-        confirm_shen = st.checkbox("我确认要清空当前项目神会员云历史库")
-        if confirm_shen and st.button("清空神会员云历史库", type="primary"):
+    with st.expander("神会员数据删除"):
+        st.info("数据量大时，不建议网页一键清空全部，容易超时。建议按日期删除。")
+
+        try:
+            uploaded_dates_df = get_shen_uploaded_dates(client, project_code)
+            if uploaded_dates_df.empty:
+                st.warning("当前没有可删除的神会员日期。")
+            else:
+                st.write("已上传日期：")
+                st.dataframe(uploaded_dates_df, use_container_width=True)
+
+                delete_date = st.selectbox(
+                    "选择要删除的日期",
+                    uploaded_dates_df["日期"].tolist(),
+                    key="delete_shen_date_select"
+                )
+
+                confirm_delete_date = st.checkbox("我确认删除所选日期的神会员数据")
+                if confirm_delete_date and st.button("删除所选日期神会员数据", type="primary"):
+                    try:
+                        delete_shen_member_by_date(client, project_code, delete_date)
+                        st.success(f"已删除 {project_code} / {delete_date} 的神会员数据。")
+                    except Exception as e:
+                        st.error("删除所选日期失败。")
+                        st.exception(e)
+
+        except Exception as e:
+            st.error("读取已上传日期失败。")
+            st.exception(e)
+
+        st.divider()
+        st.warning("如必须清空全部，建议去 Supabase SQL Editor 执行 delete，避免网页超时。")
+        confirm_shen = st.checkbox("我仍确认要尝试清空当前项目全部神会员云历史库")
+        if confirm_shen and st.button("尝试清空全部神会员云历史库", type="primary"):
             try:
                 delete_shen_member_data(client, project_code)
                 st.success(f"已清空项目 {project_code} 的神会员云历史库。")
                 st.write(get_shen_member_status(client, project_code))
             except Exception as e:
-                st.error("清空神会员云历史库失败。")
+                st.error("清空神会员云历史库失败。数据量大时请去 Supabase SQL Editor 按日期或项目删除。")
                 st.exception(e)
 
     st.divider()
@@ -585,7 +620,8 @@ def render_shen_member_cloud_monitor(client, project_code):
     city_report = calc_shen_city_report(filtered_df)
 
     st.markdown("### 五、神会员日报")
-    st.dataframe(city_report, use_container_width=True)
+    st.dataframe(city_report.tail(31), use_container_width=True)
+    st.caption(f"神会员日报仅展示最近31行，共 {len(city_report)} 行；完整数据请下载Excel。")
 
     if not city_report.empty:
         latest = city_report.iloc[-1]
@@ -620,7 +656,8 @@ def render_shen_member_cloud_monitor(client, project_code):
         if bd_report.empty:
             st.warning("未生成BD维度数据，可能是神会员门店名称与BD档案库门店名称未匹配。")
         else:
-            st.dataframe(bd_report, use_container_width=True)
+            st.dataframe(bd_report.head(500), use_container_width=True)
+            st.caption(f"神会员BD日报仅预览前500行，共 {len(bd_report)} 行；完整数据请下载Excel。")
 
             latest_date = bd_report["日期"].max()
             latest_bd = bd_report[bd_report["日期"] == latest_date].copy()
