@@ -1,3 +1,4 @@
+# V19.3 极速版：优化状态查询和按日期范围读取
 
 import re
 from io import BytesIO
@@ -278,23 +279,90 @@ def load_shen_member_from_cloud(client, project_code):
     return df
 
 
-def get_shen_member_status(client, project_code):
-    df = load_shen_member_from_cloud(client, project_code)
 
-    if df.empty:
+def load_shen_member_by_date_range(client, project_code, start_date=None, end_date=None):
+    """
+    按日期范围读取神会员数据，避免每次全量读取。
+    """
+    query = (
+        client.table(SHEN_TABLE)
+        .select("data")
+        .eq("project_code", project_code)
+    )
+
+    if start_date is not None:
+        query = query.gte("snapshot_date", str(start_date))
+    if end_date is not None:
+        query = query.lte("snapshot_date", str(end_date))
+
+    all_rows = []
+    start = 0
+    page_size = 1000
+
+    while True:
+        resp = query.range(start, start + page_size - 1).execute()
+        rows = resp.data or []
+        if not rows:
+            break
+        all_rows.extend(rows)
+        if len(rows) < page_size:
+            break
+        start += page_size
+
+    if not all_rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame([r["data"] for r in all_rows])
+    if "快照日期" in df.columns:
+        df["快照日期"] = pd.to_datetime(df["快照日期"], errors="coerce").dt.strftime("%Y-%m-%d")
+    return df
+
+
+def get_shen_member_status(client, project_code):
+    """
+    极速版神会员状态：
+    不读取 data jsonb，只读取 snapshot_date/shop_name 轻量字段。
+    """
+    all_rows = []
+    start = 0
+    page_size = 1000
+
+    while True:
+        resp = (
+            client.table(SHEN_TABLE)
+            .select("snapshot_date,shop_name")
+            .eq("project_code", project_code)
+            .range(start, start + page_size - 1)
+            .execute()
+        )
+
+        rows = resp.data or []
+        if not rows:
+            break
+
+        all_rows.extend(rows)
+
+        if len(rows) < page_size:
+            break
+
+        start += page_size
+
+    if not all_rows:
         return {
             "项目编码": project_code,
             "神会员历史库状态": "暂无神会员数据"
         }
 
+    df = pd.DataFrame(all_rows)
+    df["snapshot_date"] = pd.to_datetime(df["snapshot_date"], errors="coerce")
+
     return {
         "项目编码": project_code,
         "神会员记录数": len(df),
-        "神会员门店数": df["门店名称"].nunique() if "门店名称" in df.columns else None,
-        "最早日期": str(pd.to_datetime(df["快照日期"]).min().date()) if "快照日期" in df.columns else None,
-        "最新日期": str(pd.to_datetime(df["快照日期"]).max().date()) if "快照日期" in df.columns else None,
+        "神会员门店数": df["shop_name"].nunique() if "shop_name" in df.columns else None,
+        "最早日期": str(df["snapshot_date"].min().date()),
+        "最新日期": str(df["snapshot_date"].max().date()),
     }
-
 
 
 def get_shen_uploaded_dates(client, project_code):
@@ -592,26 +660,19 @@ def render_shen_member_cloud_monitor(client, project_code):
 
     st.markdown("### 四、神会员历史监控")
 
-    shen_df = load_shen_member_from_cloud(client, project_code)
-
-    if shen_df.empty:
+    uploaded_dates_for_range = get_shen_uploaded_dates(client, project_code)
+    if uploaded_dates_for_range.empty:
         st.warning("当前项目暂无神会员历史数据。")
         return
 
-    shen_df["快照日期"] = pd.to_datetime(shen_df["快照日期"], errors="coerce").dt.strftime("%Y-%m-%d")
-
-    min_date = pd.to_datetime(shen_df["快照日期"]).min().date()
-    max_date = pd.to_datetime(shen_df["快照日期"]).max().date()
+    min_date = pd.to_datetime(uploaded_dates_for_range["日期"]).min().date()
+    max_date = pd.to_datetime(uploaded_dates_for_range["日期"]).max().date()
 
     col_start, col_end = st.columns(2)
     start_date = col_start.date_input("神会员开始日期", value=min_date, min_value=min_date, max_value=max_date, key="shen_start_date")
     end_date = col_end.date_input("神会员结束日期", value=max_date, min_value=min_date, max_value=max_date, key="shen_end_date")
 
-    filtered_df = shen_df[
-        (pd.to_datetime(shen_df["快照日期"]).dt.date >= start_date)
-        &
-        (pd.to_datetime(shen_df["快照日期"]).dt.date <= end_date)
-    ].copy()
+    filtered_df = load_shen_member_by_date_range(client, project_code, start_date, end_date)
 
     if filtered_df.empty:
         st.warning("当前日期范围内没有神会员数据。")

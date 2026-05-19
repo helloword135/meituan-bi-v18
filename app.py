@@ -23,7 +23,7 @@ from shen_member_cloud import (
 # 商业展示配置：这里可自行修改
 # =========================
 ADMIN_WECHAT = "付费后联系"
-PRODUCT_NAME = "美团团购BI看板 V19.2 KPI目标云保存版"
+PRODUCT_NAME = "美团团购BI看板 V19.3 极速版"
 PAY_IMAGE_PATH = "assets/wechat_pay.png"
 
 PRICE_MONTH = "月卡：99元 / 城市"
@@ -36,6 +36,61 @@ PRICE_NOTICE = "付款后请备注城市/项目名称，并联系管理员获取
 # =========================
 # 无BD版经营看板
 # =========================
+
+def load_latest_history_from_cloud_fast(client, project_code):
+    """
+    极速读取主业务历史库：只取当前项目最新 snapshot_date 的数据。
+    用于KPI和汇总，避免每次全量读取全部历史库。
+    """
+    latest_resp = (
+        client.table("meituan_history")
+        .select("snapshot_date")
+        .eq("project_code", project_code)
+        .order("snapshot_date", desc=True)
+        .limit(1)
+        .execute()
+    )
+
+    latest_rows = latest_resp.data or []
+    if not latest_rows:
+        return pd.DataFrame()
+
+    latest_date = latest_rows[0]["snapshot_date"]
+
+    all_rows = []
+    start = 0
+    page_size = 1000
+
+    while True:
+        resp = (
+            client.table("meituan_history")
+            .select("data")
+            .eq("project_code", project_code)
+            .eq("snapshot_date", latest_date)
+            .range(start, start + page_size - 1)
+            .execute()
+        )
+
+        rows = resp.data or []
+        if not rows:
+            break
+
+        all_rows.extend(rows)
+
+        if len(rows) < page_size:
+            break
+
+        start += page_size
+
+    if not all_rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame([r["data"] for r in all_rows])
+    if "快照日期" in df.columns:
+        df["快照日期"] = pd.to_datetime(df["快照日期"], errors="coerce")
+    return df
+
+
 def calculate_dashboard_no_bd(df):
     shop_col = "门店名称"
     level_col = "门店分层"
@@ -194,7 +249,7 @@ def _score_by_cap(rate, weight, cap=1.5):
 @st.cache_data(ttl=300, show_spinner=False)
 def get_cached_main_history_summary(project_code):
     client = get_supabase_client()
-    history_df = load_history_from_cloud(client, project_code)
+    history_df = load_latest_history_from_cloud_fast(client, project_code)
     if history_df.empty:
         return None
     result = calculate_dashboard_no_bd(history_df)
@@ -406,7 +461,7 @@ def render_kpi_monitor(client, project_code):
 st.set_page_config(page_title=PRODUCT_NAME, layout="wide")
 
 st.title(PRODUCT_NAME)
-st.caption("授权码收费版｜云历史库｜每日数据自动累计｜神会员监控｜KPI监控｜目标云保存｜性能优化｜授权到期后自动无法使用")
+st.caption("授权码收费版｜云历史库｜每日数据自动累计｜神会员监控｜KPI监控｜极速读取｜目标云保存｜授权到期后自动无法使用")
 
 st.sidebar.header("授权验证")
 
