@@ -17,14 +17,89 @@ from shen_member_cloud import render_shen_member_cloud_monitor
 
 
 ADMIN_WECHAT = "付费后联系"
-PRODUCT_NAME = "美团团购BI看板 V20.2 每日数据批量上传版"
+PRODUCT_NAME = "美团团购BI看板 V19 增量计算正式版"
 PAY_IMAGE_PATH = "assets/wechat_pay.png"
 
-PRICE_MONTH = "月卡：399元 / 城市"
-PRICE_QUARTER = "季卡：799元 / 城市"
-PRICE_YEAR = "年卡：2599元 / 城市"
+PRICE_MONTH = "月卡：99元 / 城市"
+PRICE_QUARTER = "季卡：199元 / 城市"
+PRICE_YEAR = "年卡：399元 / 城市"
 PRICE_CUSTOM = "多城市 / 定制版：单独报价"
 PRICE_NOTICE = "付款后请备注城市/项目名称，并联系管理员获取授权码。授权码到期后自动失效，续费后可延长有效期。"
+
+
+
+def parse_snapshot_date_from_filename(filename):
+    import re
+    name = filename or ""
+    m = re.search(r"(20\d{2})[-_/\.]?(0?\d|1[0-2])[-_/\.]?([0-3]?\d)", name)
+    if not m:
+        return None
+    y, mth, d = m.group(1), m.group(2).zfill(2), m.group(3).zfill(2)
+    try:
+        return pd.to_datetime(f"{y}-{mth}-{d}").strftime("%Y-%m-%d")
+    except Exception:
+        return None
+
+
+def read_daily_file_for_summary(uploaded_file):
+    df = pd.read_excel(uploaded_file)
+    if "快照日期" not in df.columns:
+        file_date = parse_snapshot_date_from_filename(getattr(uploaded_file, "name", ""))
+        if file_date:
+            df["快照日期"] = file_date
+    return df
+
+
+def load_latest_history_from_cloud_fast(client, project_code):
+    latest_resp = (
+        client.table("meituan_history")
+        .select("snapshot_date")
+        .eq("project_code", project_code)
+        .order("snapshot_date", desc=True)
+        .limit(1)
+        .execute()
+    )
+
+    latest_rows = latest_resp.data or []
+    if not latest_rows:
+        return pd.DataFrame()
+
+    latest_date = latest_rows[0]["snapshot_date"]
+
+    all_rows = []
+    start = 0
+    page_size = 1000
+
+    while True:
+        resp = (
+            client.table("meituan_history")
+            .select("data")
+            .eq("project_code", project_code)
+            .eq("snapshot_date", latest_date)
+            .range(start, start + page_size - 1)
+            .execute()
+        )
+
+        rows = resp.data or []
+        if not rows:
+            break
+
+        all_rows.extend(rows)
+
+        if len(rows) < page_size:
+            break
+
+        start += page_size
+
+    if not all_rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame([r["data"] for r in all_rows])
+    if "快照日期" not in df.columns:
+        df["快照日期"] = latest_date
+    else:
+        df["快照日期"] = pd.to_datetime(df["快照日期"], errors="coerce").dt.strftime("%Y-%m-%d")
+    return df
 
 
 def calculate_dashboard_no_bd(df):
@@ -303,7 +378,7 @@ def render_kpi_monitor(client, project_code):
 
 st.set_page_config(page_title=PRODUCT_NAME, layout="wide")
 st.title(PRODUCT_NAME)
-st.caption("授权码收费版｜云历史库｜每日数据批量上传｜上传时预计算｜极速读取汇总表｜授权到期后自动无法使用")
+st.caption("授权码收费版｜云历史库｜增量计算｜批量上传｜极速读取汇总表｜授权到期后自动无法使用")
 
 st.sidebar.header("授权验证")
 
@@ -385,7 +460,7 @@ with st.sidebar:
 tab_main, tab_shen = st.tabs(["经营看板", "神会员监控"])
 
 with tab_main:
-    st.subheader("第一步：上传当天导出文件")
+    st.subheader("第一步：上传当天导出文件")\n    st.info("V19增量计算：上传后自动更新KPI汇总；生成经营看板默认只读取最新日期，速度更快。")
     daily_files = st.file_uploader(
         "上传当天导出Excel文件（支持多文件批量上传）",
         type=["xlsx", "xls"],
@@ -423,10 +498,21 @@ with tab_main:
                     status_text.write(f"正在处理：{file.name}（{idx}/{len(daily_files)}）")
                     inserted_count = upsert_daily_to_cloud(client, project_code, file)
 
+                    kpi_summary_status = "未生成"
+                    try:
+                        current_df = read_daily_file_for_summary(file)
+                        current_result = calculate_dashboard_no_bd(current_df)
+                        current_summary = build_dashboard_summary(current_result)
+                        upsert_kpi_daily_summary(client, project_code, current_summary.iloc[0].to_dict())
+                        kpi_summary_status = "已更新"
+                    except Exception as summary_error:
+                        kpi_summary_status = "未更新：" + str(summary_error)[:80]
+
                     total_count += inserted_count
                     success_rows.append({
                         "文件名": file.name,
                         "处理行数": inserted_count,
+                        "KPI汇总": kpi_summary_status,
                         "状态": "成功"
                     })
 
@@ -460,7 +546,7 @@ with tab_main:
     if generate_dashboard:
         try:
             client = get_supabase_client()
-            history_df = load_history_from_cloud(client, project_code)
+            history_df = load_latest_history_from_cloud_fast(client, project_code)
 
             if history_df.empty:
                 st.error("当前项目云历史库为空，请先上传当天导出文件并保存。")
