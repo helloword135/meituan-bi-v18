@@ -23,12 +23,12 @@ from shen_member_cloud import (
 # 商业展示配置：这里可自行修改
 # =========================
 ADMIN_WECHAT = "付费后联系"
-PRODUCT_NAME = "美团团购BI看板 V19.1 性能优化版"
+PRODUCT_NAME = "美团团购BI看板 V19.2 KPI目标云保存版"
 PAY_IMAGE_PATH = "assets/wechat_pay.png"
 
-PRICE_MONTH = "月卡：399元 / 城市"
-PRICE_QUARTER = "季卡：399元 / 城市"
-PRICE_YEAR = "年卡：1599元 / 城市"
+PRICE_MONTH = "月卡：99元 / 城市"
+PRICE_QUARTER = "季卡：199元 / 城市"
+PRICE_YEAR = "年卡：399元 / 城市"
 PRICE_CUSTOM = "多城市 / 定制版：单独报价"
 PRICE_NOTICE = "付款后请备注城市/项目名称，并联系管理员获取授权码。授权码到期后自动失效，续费后可延长有效期。"
 
@@ -219,6 +219,54 @@ def get_cached_shen_latest_rate(project_code):
         return 0.0
 
 
+
+def load_kpi_targets(client, project_code):
+    default_targets = {
+        "target_gtv": 3031488.0,
+        "target_smart": 181889.0,
+        "target_new_gtv": 136477.0,
+        "target_shen_rate": 85.0,
+    }
+
+    try:
+        resp = (
+            client.table("kpi_targets")
+            .select("*")
+            .eq("project_code", project_code)
+            .limit(1)
+            .execute()
+        )
+
+        rows = resp.data or []
+
+        if not rows:
+            return default_targets
+
+        row = rows[0]
+
+        return {
+            "target_gtv": float(row.get("target_gtv") or default_targets["target_gtv"]),
+            "target_smart": float(row.get("target_smart") or default_targets["target_smart"]),
+            "target_new_gtv": float(row.get("target_new_gtv") or default_targets["target_new_gtv"]),
+            "target_shen_rate": float(row.get("target_shen_rate") or default_targets["target_shen_rate"]),
+        }
+
+    except Exception:
+        return default_targets
+
+
+def save_kpi_targets(client, project_code, target_gtv, target_smart, target_new_gtv, target_shen_rate):
+    record = {
+        "project_code": project_code,
+        "target_gtv": float(target_gtv),
+        "target_smart": float(target_smart),
+        "target_new_gtv": float(target_new_gtv),
+        "target_shen_rate": float(target_shen_rate),
+    }
+
+    client.table("kpi_targets").upsert(record, on_conflict="project_code").execute()
+
+
 def render_kpi_monitor(client, project_code):
     st.subheader("KPI监控")
     st.info("目标值由城市自行输入；完成值自动从云历史库月累计数据带出。")
@@ -236,10 +284,55 @@ def render_kpi_monitor(client, project_code):
 
     st.markdown("### 目标配置")
 
-    target_gtv = st.number_input("实付验证GTV目标", min_value=0.0, value=3031488.0, step=1000.0, key="target_gtv")
-    target_smart = st.number_input("智能点餐GTV目标", min_value=0.0, value=181889.0, step=1000.0, key="target_smart")
-    target_new_gtv = st.number_input("新签门店GTV目标", min_value=0.0, value=136477.0, step=1000.0, key="target_new_gtv")
-    target_shen_rate = st.number_input("神券报名率目标（%）", min_value=0.0, max_value=100.0, value=85.0, step=1.0, key="target_shen_rate")
+    kpi_targets = load_kpi_targets(client, project_code)
+
+    target_gtv = st.number_input(
+        "实付验证GTV目标",
+        min_value=0.0,
+        value=float(kpi_targets["target_gtv"]),
+        step=1000.0,
+        key=f"target_gtv_{project_code}"
+    )
+
+    target_smart = st.number_input(
+        "智能点餐GTV目标",
+        min_value=0.0,
+        value=float(kpi_targets["target_smart"]),
+        step=1000.0,
+        key=f"target_smart_{project_code}"
+    )
+
+    target_new_gtv = st.number_input(
+        "新签门店GTV目标",
+        min_value=0.0,
+        value=float(kpi_targets["target_new_gtv"]),
+        step=1000.0,
+        key=f"target_new_gtv_{project_code}"
+    )
+
+    target_shen_rate = st.number_input(
+        "神券报名率目标（%）",
+        min_value=0.0,
+        max_value=100.0,
+        value=float(kpi_targets["target_shen_rate"]),
+        step=1.0,
+        key=f"target_shen_rate_{project_code}"
+    )
+
+    if st.button("保存当前城市KPI目标", type="primary", key=f"save_kpi_targets_{project_code}"):
+        try:
+            save_kpi_targets(
+                client,
+                project_code,
+                target_gtv,
+                target_smart,
+                target_new_gtv,
+                target_shen_rate
+            )
+            st.success(f"项目 {project_code} 的KPI目标已保存。下次登录会自动带出。")
+        except Exception as e:
+            st.error("KPI目标保存失败，请确认 Supabase 已执行 kpi_targets 建表SQL。")
+            st.exception(e)
 
     rows = []
 
@@ -313,7 +406,7 @@ def render_kpi_monitor(client, project_code):
 st.set_page_config(page_title=PRODUCT_NAME, layout="wide")
 
 st.title(PRODUCT_NAME)
-st.caption("授权码收费版｜云历史库｜每日数据自动累计｜神会员监控｜KPI监控｜性能优化｜授权到期后自动无法使用")
+st.caption("授权码收费版｜云历史库｜每日数据自动累计｜神会员监控｜KPI监控｜目标云保存｜性能优化｜授权到期后自动无法使用")
 
 st.sidebar.header("授权验证")
 
