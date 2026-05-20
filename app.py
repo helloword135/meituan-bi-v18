@@ -17,12 +17,12 @@ from shen_member_cloud import render_shen_member_cloud_monitor
 
 
 ADMIN_WECHAT = "付费后联系"
-PRODUCT_NAME = "美团团购BI看板 V19 增量计算正式版"
+PRODUCT_NAME = "美团团购BI看板 V20正式版"
 PAY_IMAGE_PATH = "assets/wechat_pay.png"
 
-PRICE_MONTH = "月卡：99元 / 城市"
-PRICE_QUARTER = "季卡：199元 / 城市"
-PRICE_YEAR = "年卡：399元 / 城市"
+PRICE_MONTH = "月卡：399元 / 城市"
+PRICE_QUARTER = "季卡：699元 / 城市"
+PRICE_YEAR = "年卡：1999元 / 城市"
 PRICE_CUSTOM = "多城市 / 定制版：单独报价"
 PRICE_NOTICE = "付款后请备注城市/项目名称，并联系管理员获取授权码。授权码到期后自动失效，续费后可延长有效期。"
 
@@ -460,7 +460,8 @@ with st.sidebar:
 tab_main, tab_shen = st.tabs(["经营看板", "神会员监控"])
 
 with tab_main:
-    st.subheader("第一步：上传当天导出文件")\n    st.info("V19增量计算：上传后自动更新KPI汇总；生成经营看板默认只读取最新日期，速度更快。")
+    st.subheader("第一步：上传当天导出文件")
+    st.info("V19增量计算：上传后自动更新KPI汇总；生成经营看板默认只读取最新日期，速度更快。")
     daily_files = st.file_uploader(
         "上传当天导出Excel文件（支持多文件批量上传）",
         type=["xlsx", "xls"],
